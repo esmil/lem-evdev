@@ -1,26 +1,27 @@
-CC      = gcc
-CFLAGS  ?= -O2 -pipe -Wall -Wextra -Wno-variadic-macros -Wno-strict-aliasing
-STRIP   = strip
-INSTALL = install
+CC         = gcc
+CFLAGS    ?= -O2 -pipe -Wall -Wextra -Wno-variadic-macros -Wno-strict-aliasing
+PKGCONFIG  = pkg-config
+STRIP      = strip
+INSTALL    = install
 
-LUA_VERSION = 5.1
-PREFIX      = /usr/local
-LIBDIR      = $(PREFIX)/lib/lua/$(LUA_VERSION)/lem
+CFLAGS    += $(shell $(PKGCONFIG) --cflags lem)
+LUA_PATH   = $(shell $(PKGCONFIG) --variable=path lem)
+LUA_CPATH  = $(shell $(PKGCONFIG) --variable=cpath lem)
 
 programs = evdev.so
 
 ifdef NDEBUG
-DEFINES+=-DNDEBUG
+CFLAGS += -DNDEBUG
 endif
 
-.PHONY: all strip install indent clean
+.PHONY: all strip install clean
 .PRECIOUS: %.o
 
 all: $(programs)
 
 %.o: %.c
 	@echo '  CC $@'
-	@$(CC) $(CFLAGS) -I$(PREFIX)/include -fPIC -nostartfiles $(DEFINES) -c $< -o $@
+	@$(CC) $(CFLAGS) -fPIC -nostartfiles -c $< -o $@
 
 %.so: %.o
 	@echo '  LD $@'
@@ -32,17 +33,13 @@ all: $(programs)
 
 strip: $(programs:%=%-strip)
 
-libdir-install:
-	@echo "  INSTALL -d $(LIBDIR)"
-	@$(INSTALL) -d $(DESTDIR)$(LIBDIR)
+cpath-install:
+	@echo "  INSTALL -d $(LUA_CPATH)/lem"
+	@$(INSTALL) -d $(DESTDIR)$(LUA_CPATH)/lem
 
-%.lua-install: %.lua libdir-install
+%.so-install: %.so cpath-install
 	@echo "  INSTALL $<"
-	@$(INSTALL) $< $(DESTDIR)$(LIBDIR)/$<
-
-%.so-install: %.so libdir-install
-	@echo "  INSTALL $<"
-	@$(INSTALL) $< $(DESTDIR)$(LIBDIR)/$<
+	@$(INSTALL) $< $(DESTDIR)$(LUA_CPATH)/lem/$<
 
 install: $(programs:%=%-install)
 
