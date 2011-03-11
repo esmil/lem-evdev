@@ -47,7 +47,7 @@ This sets `evdev` to a table with the following functions.
 
   Returns `nil` followed by an error message on error.
 
-The metatable of those device objects can be found under __evdev.Device__.
+The metatable of device objects can be found under __evdev.Device__.
 
 The following methods are available on devices.
 
@@ -63,8 +63,8 @@ The following methods are available on devices.
 
   Interrupt any coroutine waiting for IO on the device.
 
-  Returns `true` on success and `nil, 'not busy'` if no coroutine is for IO
-  on the device.
+  Returns `true` on success and `nil, 'not busy'` if no coroutine is waiting
+  for IO on the device.
 
 * __dev:get()__
 
