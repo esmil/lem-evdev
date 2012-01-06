@@ -1,7 +1,7 @@
 #!/usr/bin/env lem
 --
 -- This file is part of lem-evdev.
--- Copyright 2011 Emil Renner Berthing
+-- Copyright 2011-2012 Emil Renner Berthing
 --
 -- lem-evdev is free software: you can redistribute it and/or
 -- modify it under the terms of the GNU General Public License as
@@ -16,6 +16,9 @@
 -- You should have received a copy of the GNU General Public License
 -- along with lem-evdev.  If not, see <http://www.gnu.org/licenses/>.
 --
+
+package.path = '?.lua;' .. package.path
+package.cpath = '?.so;' .. package.cpath
 
 local utils = require 'lem.utils'
 local evdev = require 'lem.evdev'

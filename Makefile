@@ -1,47 +1,58 @@
-CC         = gcc
-CFLAGS    ?= -O2 -pipe -Wall -Wextra -Wno-variadic-macros -Wno-strict-aliasing
-PKGCONFIG  = pkg-config
+CC         = gcc -std=gnu99
+CFLAGS    ?= -O2 -pipe -Wall -Wextra
+PKG_CONFIG = pkg-config
 STRIP      = strip
 INSTALL    = install
+UNAME      = uname
 
-CFLAGS    += $(shell $(PKGCONFIG) --cflags lem)
-LUA_PATH   = $(shell $(PKGCONFIG) --variable=path lem)
-LUA_CPATH  = $(shell $(PKGCONFIG) --variable=cpath lem)
+OS         = $(shell $(UNAME))
+CFLAGS    += $(shell $(PKG_CONFIG) --cflags lem)
+lmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_LMOD lem)
+cmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_CMOD lem)
 
-programs = evdev.so
-
-ifdef NDEBUG
-CFLAGS += -DNDEBUG
+ifeq ($(OS),Darwin)
+SHARED     = -dynamiclib -Wl,-undefined,dynamic_lookup
+STRIP     += -x
+else
+SHARED     = -shared
 endif
 
-.PHONY: all strip install clean
-.PRECIOUS: %.o
+llibs =
+clibs = lem/evdev.so
 
-all: $(programs)
+ifdef V
+E=@\#
+Q=
+else
+E=@echo
+Q=@
+endif
 
-%.o: %.c
-	@echo '  CC $@'
-	@$(CC) $(CFLAGS) -fPIC -nostartfiles -c $< -o $@
+.PHONY: all debug strip install clean
 
-%.so: %.o
-	@echo '  LD $@'
-	@$(CC) -shared $(LDFLAGS) $^ -o $@
+all: CFLAGS += -DNDEBUG
+all: $(clibs)
+
+debug: $(clibs)
+
+lem/evdev.so: lem/evdev.c
+	$E '  CCLD  $@'
+	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(SHARED) $^ -o $@ $(LDFLAGS) $(LIBS)
 
 %-strip: %
-	@echo '  STRIP $<'
-	@$(STRIP) $<
+	$E '  STRIP $<'
+	$Q$(STRIP) $<
 
-strip: $(programs:%=%-strip)
+strip: $(clibs:%=%-strip)
 
-cpath-install:
-	@echo "  INSTALL -d $(LUA_CPATH)/lem"
-	@$(INSTALL) -d $(DESTDIR)$(LUA_CPATH)/lem
+$(DESTDIR)$(lmoddir)/% $(DESTDIR)$(cmoddir)/%: %
+	$E '  INSTALL $@'
+	$Q$(INSTALL) -d $(dir $@)
+	$Q$(INSTALL) -m 644 $< $@
 
-%.so-install: %.so cpath-install
-	@echo "  INSTALL $<"
-	@$(INSTALL) $< $(DESTDIR)$(LUA_CPATH)/lem/$<
-
-install: $(programs:%=%-install)
+install: \
+	$(llibs:%=$(DESTDIR)$(lmoddir)/%) \
+	$(clibs:%=$(DESTDIR)$(cmoddir)/%)
 
 clean:
-	rm -f $(programs) *.o *.c~ *.h~
+	rm -f $(clibs)

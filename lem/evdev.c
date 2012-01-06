@@ -1,6 +1,6 @@
 /*
  * This file is part of lem-evdev.
- * Copyright 2011 Emil Renner Berthing
+ * Copyright 2011-2012 Emil Renner Berthing
  *
  * lem-evdev is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -25,22 +25,36 @@
 #include <lem.h>
 
 static int
+evdev_closed(lua_State *T)
+{
+	lua_pushnil(T);
+	lua_pushliteral(T, "closed");
+	return 2;
+}
+
+static int
+evdev_busy(lua_State *T)
+{
+	lua_pushnil(T);
+	lua_pushliteral(T, "busy");
+	return 2;
+}
+
+static int
+evdev_strerror(lua_State *T, int err)
+{
+	lua_pushnil(T);
+	lua_pushstring(T, strerror(err));
+	return 2;
+}
+
+static int
 evdev_gc(lua_State *T)
 {
 	struct ev_io *w = lua_touserdata(T, 1);
 
-	if (w->data != NULL) {
-		lua_State *S;
-
-		ev_io_stop(EV_G_ w);
-		S = w->data;
-		lua_pushnil(S);
-		lua_pushliteral(S, "interrupted");
-		lem_queue(S, 2);
-	}
-
 	if (w->fd >= 0)
-		close(w->fd);
+		(void)close(w->fd);
 
 	return 0;
 }
@@ -52,29 +66,14 @@ evdev_close(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	w = lua_touserdata(T, 1);
-	if (w->fd < 0) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "already closed");
-		return 2;
-	}
+	if (w->fd < 0)
+		return evdev_closed(T);
+	if (w->data != NULL)
+		return evdev_busy(T);
 
-	if (w->data != NULL) {
-		lua_State *S = w->data;
+	if (close(w->fd))
+		return evdev_strerror(T, errno);
 
-		ev_io_stop(EV_G_ w);
-		S = w->data;
-		lua_pushnil(S);
-		lua_pushliteral(S, "interrupted");
-		lem_queue(S, 2);
-		w->data = NULL;
-	}
-
-	if (close(w->fd)) {
-		lua_pushnil(T);
-		lua_pushstring(T, strerror(errno));
-		return 2;
-	}
-	
 	lua_pushboolean(T, 1);
 	return 1;
 }
@@ -94,7 +93,7 @@ evdev_interrupt(lua_State *T)
 	}
 
 	lem_debug("interrupting io action");
-	ev_io_stop(EV_G_ w);
+	ev_io_stop(LEM_ w);
 
 	S = w->data;
 	lua_pushnil(S);
@@ -107,13 +106,14 @@ evdev_interrupt(lua_State *T)
 }
 
 static int
-try_read(lua_State *T, int fd)
+evdev__get(lua_State *T, struct ev_io *w, int tbl)
 {
 	struct input_event iev;
 	ssize_t ret;
+	int err;
 
-	ret = read(fd, &iev, sizeof(struct input_event));
-	lem_debug("read %ld bytes", ret);
+	ret = read(w->fd, &iev, sizeof(struct input_event));
+	lem_debug("read %ld bytes from %d", ret, w->fd);
 	if (ret > 0) {
 		lua_Number n;
 
@@ -123,44 +123,39 @@ try_read(lua_State *T, int fd)
 		n /= 1.0e6;
 		n += (lua_Number)iev.time.tv_sec;
 
-		lua_rawgeti(T, lua_upvalueindex(1), iev.type);
+		lua_rawgeti(T, tbl, iev.type);
 		lua_pushnumber(T, iev.code);
 		lua_pushnumber(T, iev.value);
 		lua_pushnumber(T, n);
 
 		return 4;
 	}
+	err = errno;
 
-	if (ret < 0 && errno == EAGAIN)
+	if (ret < 0 && err == EAGAIN)
 		return 0;
 
-	lua_pushnil(T);
+	(void)close(w->fd);
+	w->fd = -1;
 
-	if (ret == 0 || errno == ECONNRESET || errno == EPIPE)
-		lua_pushliteral(T, "closed");
-	else
-		lua_pushstring(T, strerror(errno));
+	if (ret == 0 || err == ECONNRESET || err == EPIPE)
+		return evdev_closed(T);
 
-	return 2;
+	return evdev_strerror(T, err);
 }
 
 static void
-evdev_get_handler(EV_P_ struct ev_io *w, int revents)
+evdev_get_cb(EV_P_ struct ev_io *w, int revents)
 {
 	int ret;
 
 	(void)revents;
 
-	ret = try_read(w->data, w->fd);
+	ret = evdev__get(w->data, w, 2);
 	if (ret == 0)
 		return;
 
 	ev_io_stop(EV_A_ w);
-	if (ret == 2) {
-		close(w->fd);
-		w->fd = -1;
-	}
-
 	lem_queue(w->data, ret);
 	w->data = NULL;
 }
@@ -173,31 +168,21 @@ evdev_get(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	w = lua_touserdata(T, 1);
-	if (w->fd < 0) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
+	if (w->fd < 0)
+		return evdev_closed(T);
+	if (w->data != NULL)
+		return evdev_busy(T);
 
-	if (w->data != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
-
-	ret = try_read(T, w->fd);
-	if (ret > 0) {
-		if (ret == 2) {
-			close(w->fd);
-			w->fd = -1;
-		}
+	ret = evdev__get(T, w, lua_upvalueindex(1));
+	if (ret > 0)
 		return ret;
-	}
 
 	lem_debug("yielding");
 	w->data = T;
-	ev_io_start(EV_G_ w);
-	return lua_yield(T, 0);
+	ev_io_start(LEM_ w);
+	lua_settop(T, 1);
+	lua_pushvalue(T, lua_upvalueindex(1));
+	return lua_yield(T, 2);
 }
 
 static int
@@ -208,28 +193,14 @@ evdev_open(lua_State *T)
 	struct ev_io *w;
 
 	fd = open(path, O_RDONLY | O_NONBLOCK);
-	if (fd < 0) {
-		int err = errno;
-
-		lua_pushnil(T);
-		switch (err) {
-		case ENOENT:
-			lua_pushliteral(T, "not found");
-			break;
-		case EACCES:
-			lua_pushliteral(T, "permission denied");
-			break;
-		default:
-			lua_pushstring(T, strerror(err));
-		}
-		return 2;
-	}
+	if (fd < 0)
+		return evdev_strerror(T, errno);
 
 	w = lua_newuserdata(T, sizeof(struct ev_io));
 	lua_pushvalue(T, lua_upvalueindex(1));
 	lua_setmetatable(T, -2);
 
-	ev_io_init(w, evdev_get_handler, fd, EV_READ);
+	ev_io_init(w, evdev_get_cb, fd, EV_READ);
 	w->data = NULL;
 
 	return 1;
